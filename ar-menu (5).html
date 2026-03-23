@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>SAVORIS — AR Menu</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:wght@200;300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#08070a;--cream:#f4ede0;--gold:#c9a04a;--goldl:#e6c060;
+  --glass:rgba(244,237,224,.06);--gb:rgba(201,160,74,.22);
+  --blur:saturate(180%) blur(20px);
+  --top:52px;--cat:44px;--pan:300px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--ink);color:var(--cream);font-family:'DM Sans',sans-serif;overscroll-behavior:none}
+
+/* grain */
+body::before{content:'';position:fixed;inset:0;z-index:9990;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='.04'/%3E%3C/svg%3E");
+  opacity:.45;mix-blend-mode:overlay}
+
+/* ── LOADER ── */
+#loader{position:fixed;inset:0;z-index:9000;background:var(--ink);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.6rem;transition:opacity .7s ease,visibility .7s ease}
+#loader.gone{opacity:0;visibility:hidden;pointer-events:none}
+.ld-logo{font-family:'Cormorant Garamond',serif;font-size:clamp(2.8rem,11vw,5rem);font-weight:300;letter-spacing:.44em;color:var(--cream)}
+.ld-logo em{color:var(--gold);font-style:normal}
+.ld-track{width:150px;height:1px;background:rgba(201,160,74,.12);overflow:hidden}
+.ld-fill{height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--goldl));transition:width .4s ease}
+.ld-txt{font-size:.58rem;letter-spacing:.28em;text-transform:uppercase;color:var(--gold);opacity:.55}
+
+/* ── APP SHELL: fixed 4-row column ── */
+#app{position:fixed;inset:0;display:flex;flex-direction:column}
+
+/* ROW 1 — topbar */
+#topbar{
+  flex-shrink:0;height:var(--top);
+  padding:0 1.1rem;padding-top:env(safe-area-inset-top,0px);
+  display:flex;align-items:center;justify-content:space-between;
+  background:linear-gradient(to bottom,rgba(8,7,10,.9),transparent);
+  z-index:200;opacity:0;animation:fup .5s ease .15s forwards
+}
+.logo{font-family:'Cormorant Garamond',serif;font-size:1.2rem;font-weight:300;letter-spacing:.44em;color:var(--cream);text-transform:uppercase}
+.logo em{color:var(--gold);font-style:normal}
+.badge{display:flex;align-items:center;gap:.36rem;background:var(--glass);border:1px solid var(--gb);backdrop-filter:var(--blur);border-radius:100px;padding:.28rem .75rem;font-size:.55rem;letter-spacing:.15em;text-transform:uppercase;color:var(--gold)}
+.bdot{width:5px;height:5px;border-radius:50%;background:var(--gold);animation:blink 2s ease infinite}
+@keyframes blink{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.5)}}
+.bdot.g{background:#4ade80}.bdot.b{background:#60a5fa}.bdot.p{background:#a78bfa}
+
+/* ROW 2 — categories */
+#cats{
+  flex-shrink:0;height:var(--cat);
+  display:flex;align-items:center;justify-content:center;
+  padding:0 .8rem;z-index:200;
+  opacity:0;animation:fup .5s ease .3s forwards
+}
+.cats-wrap{display:flex;gap:.15rem;background:var(--glass);border:1px solid var(--gb);backdrop-filter:var(--blur);border-radius:100px;padding:.2rem;overflow-x:auto;scrollbar-width:none;max-width:100%}
+.cats-wrap::-webkit-scrollbar{display:none}
+.cbt{padding:.3rem .82rem;border-radius:100px;border:none;background:transparent;color:rgba(244,237,224,.38);font-family:'DM Sans',sans-serif;font-size:.65rem;font-weight:300;letter-spacing:.07em;cursor:pointer;transition:all .25s ease;white-space:nowrap;flex-shrink:0;touch-action:manipulation}
+.cbt.on{background:linear-gradient(135deg,var(--gold),var(--goldl));color:var(--ink);font-weight:500}
+.cbt:active{transform:scale(.94)}
+
+/* ROW 3 — 3D viewer */
+#viewer{
+  flex:1;min-height:0;position:relative;overflow:hidden;
+  /* Force a block formatting context */
+  display:block;
+}
+/* Both canvases fill the viewer absolutely */
+#bg-cv,#food-cv{
+  position:absolute;
+  top:0;left:0;
+  width:100%;height:100%;
+  display:block;
+}
+#bg-cv{z-index:1;pointer-events:none}
+#food-cv{z-index:2;touch-action:none}
+#amb{position:absolute;inset:0;z-index:0;pointer-events:none;transition:background 1.8s ease}
+#flash{position:absolute;inset:0;z-index:5;background:var(--ink);opacity:0;pointer-events:none;transition:opacity .16s ease}
+#flash.on{opacity:.68}
+#vidx{position:absolute;bottom:.7rem;left:1rem;z-index:6;font-size:.52rem;letter-spacing:.3em;text-transform:uppercase;color:var(--gold);opacity:.6}
+
+/* gesture hint */
+#ghint{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:4;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:.6rem;opacity:0;animation:fup .4s ease 2s forwards,fout .4s ease 5s forwards}
+@keyframes fout{to{opacity:0}}
+.gr{width:50px;height:50px;border-radius:50%;border:1px solid rgba(201,160,74,.3);animation:gp 1.5s ease infinite}
+@keyframes gp{0%,100%{transform:scale(.7);opacity:.2}50%{transform:scale(1.2);opacity:.7}}
+.gt{font-size:.55rem;letter-spacing:.2em;text-transform:uppercase;color:rgba(201,160,74,.5)}
+
+/* ROW 4 — panel */
+#panel{
+  flex-shrink:0;
+  height:var(--pan);
+  display:flex;flex-direction:column;gap:.42rem;
+  padding:.95rem 1.15rem max(env(safe-area-inset-bottom,0px),.95rem);
+  background:linear-gradient(to top,rgba(8,7,10,1) 72%,rgba(8,7,10,.65) 94%,transparent);
+  z-index:200;overflow:hidden;
+  transition:height .4s cubic-bezier(.16,1,.3,1);
+  opacity:0;animation:fup .6s ease .55s forwards
+}
+#panel.mini{height:var(--pan-mini)}
+
+.pname{font-family:'Cormorant Garamond',serif;font-size:clamp(1.55rem,5.2vw,2.5rem);font-weight:300;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pname em{font-style:italic;color:var(--gold)}
+.ptag{font-size:.65rem;font-weight:200;color:rgba(244,237,224,.36);letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pstats{display:flex;gap:1rem;align-items:flex-end;flex-wrap:wrap}
+.stat{display:flex;flex-direction:column;gap:.06rem}
+.sl{font-size:.46rem;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);opacity:.6}
+.sv{font-size:.78rem;font-weight:300;color:var(--cream)}
+.sv.price{font-family:'Cormorant Garamond',serif;font-size:1.38rem;font-weight:400;color:var(--gold)}
+.ping{font-size:.63rem;font-weight:200;line-height:1.75;color:rgba(244,237,224,.3);letter-spacing:.02em;overflow:hidden;transition:max-height .4s ease,opacity .3s ease;max-height:80px}
+.ping.hide{max-height:0!important;opacity:0}
+
+/* actions */
+.pacts{display:flex;gap:.5rem;align-items:center;margin-top:auto;flex-shrink:0}
+.bar{flex:1;height:46px;display:flex;align-items:center;justify-content:center;gap:.5rem;border-radius:100px;border:none;background:linear-gradient(135deg,var(--gold),var(--goldl));color:var(--ink);font-family:'DM Sans',sans-serif;font-size:.7rem;font-weight:500;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:all .22s ease;touch-action:manipulation}
+.bar:active{transform:scale(.96);opacity:.88}
+.bar svg{width:15px;height:15px;stroke:var(--ink);fill:none;stroke-width:2;flex-shrink:0}
+.bico{width:46px;height:46px;border-radius:50%;flex-shrink:0;background:var(--glass);border:1px solid var(--gb);backdrop-filter:var(--blur);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .22s ease;touch-action:manipulation}
+.bico:active{transform:scale(.9);border-color:var(--gold)}
+.bico svg{width:16px;height:16px;stroke:var(--cream);fill:none;stroke-width:1.5}
+
+/* ── nav row (floats above panel) ── */
+#nav{
+  position:fixed;left:50%;transform:translateX(-50%);
+  bottom:var(--pan);z-index:300;
+  display:flex;align-items:center;gap:.9rem;padding:.4rem;
+  opacity:0;animation:fup .5s ease .75s forwards
+}
+.narr{width:38px;height:38px;border-radius:50%;background:var(--glass);border:1px solid var(--gb);backdrop-filter:var(--blur);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .22s ease;touch-action:manipulation}
+.narr:active{transform:scale(.9);border-color:var(--gold)}
+.narr svg{width:14px;height:14px;stroke:var(--cream);fill:none;stroke-width:2}
+#dots{display:flex;gap:.3rem;align-items:center}
+.dot{width:4px;height:4px;border-radius:50%;background:rgba(244,237,224,.2);transition:all .28s ease}
+.dot.on{background:var(--gold);transform:scale(1.5)}
+
+/* ── toast ── */
+#toast{
+  position:fixed;top:calc(var(--top) + var(--cat) + .4rem);
+  left:50%;transform:translateX(-50%);z-index:9500;
+  background:rgba(8,7,10,.9);border:1px solid var(--gb);backdrop-filter:var(--blur);
+  border-radius:100px;padding:.4rem 1.1rem;font-size:.63rem;letter-spacing:.09em;
+  color:var(--gold);white-space:nowrap;pointer-events:none;
+  opacity:0;transition:opacity .25s ease;max-width:88vw;overflow:hidden;text-overflow:ellipsis;text-align:center
+}
+#toast.on{opacity:1}
+
+/* ── desktop AR modal ── */
+#armod{position:fixed;inset:0;z-index:9800;background:rgba(8,7,10,.88);backdrop-filter:blur(18px);display:none;align-items:center;justify-content:center;padding:1.5rem}
+#armod.on{display:flex}
+.amc{background:rgba(16,14,20,.95);border:1px solid var(--gb);border-radius:20px;padding:1.8rem 1.5rem;text-align:center;max-width:340px;width:100%;display:flex;flex-direction:column;align-items:center;gap:.85rem}
+.ami{width:48px;height:48px;opacity:.55}
+.ami svg{width:100%;height:100%;stroke:var(--gold);fill:none;stroke-width:1.2}
+.amc h3{font-family:'Cormorant Garamond',serif;font-size:1.65rem;font-weight:300}
+.amc h3 em{color:var(--gold);font-style:italic}
+.amc p{font-size:.7rem;font-weight:200;color:rgba(244,237,224,.38);line-height:1.7}
+.amsteps{width:100%;text-align:left;display:flex;flex-direction:column;gap:.6rem}
+.amst{display:flex;gap:.7rem;align-items:flex-start}
+.amn{width:19px;height:19px;border-radius:50%;flex-shrink:0;background:rgba(201,160,74,.1);border:1px solid var(--gb);font-size:.58rem;font-weight:500;color:var(--gold);display:flex;align-items:center;justify-content:center}
+.amt{font-size:.67rem;font-weight:200;color:rgba(244,237,224,.4);line-height:1.5;padding-top:.12rem}
+.amt strong{color:var(--cream);font-weight:400}
+.amclose{padding:.68rem 1.8rem;border-radius:100px;background:var(--glass);border:1px solid var(--gb);color:var(--cream);font-family:'DM Sans',sans-serif;font-size:.7rem;letter-spacing:.1em;cursor:pointer;transition:all .22s ease;margin-top:.2rem;touch-action:manipulation}
+.amclose:active{border-color:var(--gold);transform:scale(.97)}
+
+/* hidden iOS USDZ anchor */
+#usdz{display:none}
+
+@keyframes fup{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<!-- LOADER -->
+<div id="loader">
+  <div class="ld-logo">SAV<em>O</em>RIS</div>
+  <div class="ld-track"><div class="ld-fill" id="ldf"></div></div>
+  <div class="ld-txt" id="ldt">Initialising…</div>
+</div>
+
+<div id="toast"></div>
+<a id="usdz" rel="ar"><img src="" alt=""></a>
+
+<!-- DESKTOP AR MODAL -->
+<div id="armod">
+  <div class="amc">
+    <div class="ami"><svg viewBox="0 0 64 64" stroke-linecap="round" stroke-linejoin="round"><path d="M32 8L8 20v24l24 12 24-12V20z"/><line x1="32" y1="44" x2="32" y2="32"/><line x1="8" y1="20" x2="32" y2="32"/><line x1="56" y1="20" x2="32" y2="32"/></svg></div>
+    <h3>View in <em>AR</em></h3>
+    <p>Open this page on a mobile device to see dishes in your real environment.</p>
+    <div class="amsteps">
+      <div class="amst"><div class="amn">1</div><div class="amt"><strong>Android (Chrome)</strong> — Tap "View in AR". Allow camera. ARCore places the dish on any flat surface via WebXR.</div></div>
+      <div class="amst"><div class="amn">2</div><div class="amt"><strong>iPhone / iPad (Safari)</strong> — Tap "View in AR". AR Quick Look opens instantly — no permission needed.</div></div>
+    </div>
+    <button class="amclose" id="amclose">Continue in 3D</button>
+  </div>
+</div>
+
+<!-- APP SHELL -->
+<div id="app">
+
+  <!-- ROW 1: topbar -->
+  <div id="topbar">
+    <div class="logo">SAV<em>O</em>RIS</div>
+    <div class="badge"><div class="bdot" id="bdot"></div><span id="btext">Loading…</span></div>
+  </div>
+
+  <!-- ROW 2: categories -->
+  <div id="cats">
+    <div class="cats-wrap">
+      <button class="cbt on" data-c="all">All</button>
+      <button class="cbt" data-c="veg">🌿 Veg</button>
+      <button class="cbt" data-c="nonveg">🍖 Non-Veg</button>
+      <button class="cbt" data-c="dessert">🍮 Dessert</button>
+    </div>
+  </div>
+
+  <!-- ROW 3: 3D viewer -->
+  <div id="viewer">
+    <div id="amb"></div>
+    <canvas id="bg-cv"></canvas>
+    <canvas id="food-cv"></canvas>
+    <div id="vidx">01 / 08</div>
+    <div id="flash"></div>
+    <div id="ghint"><div class="gr"></div><div class="gt">Drag · Pinch · Swipe</div></div>
+  </div>
+
+  <!-- ROW 4: info panel -->
+  <div id="panel">
+    <div class="pname" id="pname">Truffle <em>Arancini</em></div>
+    <div class="ptag"  id="ptag">Aged Parmigiano · Black Truffle · Saffron Aioli</div>
+    <div class="pstats">
+      <div class="stat"><span class="sl">Price</span><span class="sv price" id="pprice">₹680</span></div>
+      <div class="stat"><span class="sl">Calories</span><span class="sv" id="pcal">420 kcal</span></div>
+      <div class="stat"><span class="sl">Type</span><span class="sv" id="ptype">Vegetarian</span></div>
+    </div>
+    <div class="ping" id="ping">Arborio rice · Black truffle · Parmigiano reggiano · Saffron aioli · Crispy panko · Wild herbs</div>
+    <div class="pacts">
+      <button class="bar" id="arbtn">
+        <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0L3 6.27A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        <span id="artxt">View in AR</span>
+      </button>
+      <div class="bico" id="itog"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+      <div class="bico" id="ptog"><svg id="ptogsv" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- NAV ROW -->
+<div id="nav">
+  <div class="narr" id="prev"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></div>
+  <div id="dots"></div>
+  <div class="narr" id="next"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></div>
+</div>
+
+<script>
+/* ───────────────────────────────────────────
+   MENU DATA
+─────────────────────────────────────────── */
+const MENU=[
+  {id:'arancini',cat:'veg',catLbl:'Vegetarian',name:['Truffle','Arancini'],tag:'Aged Parmigiano · Black Truffle · Saffron Aioli',price:'₹680',cal:'420 kcal',ing:'Arborio rice · Black truffle · Parmigiano reggiano · Saffron aioli · Crispy panko · Wild herbs',usdz:'https://developer.apple.com/augmented-reality/quick-look/models/teapot/teapot.usdz',amb:'radial-gradient(ellipse at 60% 40%,rgba(200,140,20,.18) 0%,transparent 65%)',shape:'cluster',cA:0xc8820a,cB:0xe8a820,cC:0xf5c84a},
+  {id:'pizza',cat:'veg',catLbl:'Vegetarian',name:['Truffle','Burrata Pizza'],tag:'San Marzano · Fior di Latte · Basil Oil',price:'₹860',cal:'540 kcal',ing:'Napoli dough · San Marzano tomato · Fior di latte mozzarella · Black truffle oil · Burrata',usdz:'https://developer.apple.com/augmented-reality/quick-look/models/teapot/teapot.usdz',amb:'radial-gradient(ellipse at 45% 52%,rgba(190,60,25,.2) 0%,transparent 65%)',shape:'disc',cA:0xd44422,cB:0xf5c050,cC:0x6a8c3a},
+  {id:'salmon',cat:'nonveg',catLbl:'Non-Vegetarian',name:['Miso Glazed','Salmon'],tag:'Cedar Plank · Yuzu Beurre Blanc · Edamame',price:'₹1,120',cal:'540 kcal',ing:'Atlantic salmon · White miso · Mirin · Cedar smoke · Yuzu beurre blanc · Edamame purée',usdz:'https://developer.apple.com/augmented-reality/quick-look/models/teapot/teapot.usdz',amb:'radial-gradient(ellipse at 55% 45%,rgba(215,110,50,.17) 0%,transparent 68%)',shape:'wave',cA:0xd46030,cB:0xe89040,cC:0xfabc70},
+  {id:'lamb',cat:'nonveg',catLbl:'Non-Vegetarian',name:['Rosemary','Lamb Rack'],tag:'French Trimmed · Herb Crust · Jus Gras',price:'₹1,480',cal:'680 kcal',ing:'Frenched lamb rack · Dijon crust · Rosemary jus · Asparagus · Potato dauphinoise',usdz:'https://developer.apple.com/augmented-reality/quick-look/models/teapot/teapot.usdz',amb:'radial-gradient(ellipse at 40% 55%,rgba(140,50,25,.2) 0%,transparent 68%)',shape:'arch',cA:0x7c3018,cB:0x4a6820,cC:0xc89050},
+  {id:'ravioli',cat:'veg',catLbl:'Vegetarian',name:['Wild Mushroom','Ravioli'],tag:'Porcini Butter · Crispy Sage · Pecorino',price:'₹760',cal:'490 kcal',ing:'Hand-rolled egg pasta · Wild porcini · Fontina · Brown butter · Crispy sage · Aged pecorino',usdz:'https://developer.apple.com/augmented-reality/quick-look/models/teapot/teapot.usdz',amb:'radial-gradient(ellipse at 46% 50%,rgba(90,60,28,.22) 0%,transparent 68%)',shape:'pillow',cA:0xddb868,cB:0x8a6030,cC:0xc89840},
+  {id:'duck',cat:'nonveg',catLbl:'Non-Vegetarian',name:['Confit','Duck Leg'],tag:'Cherry Gastrique · Lentil Cassoulet · Thyme',price:'₹1,350',cal:'720 kcal',ing:'Duck leg confit · Sour cherry gastrique · Puy lentils · Roasted garlic · Thyme',usdz:'https://developer.apple.com/augmented-reality/quick-look/models/teapot/teapot.usdz',amb:'radial-gradient(ellipse at 58% 48%,rgba(120,40,18,.22) 0%,transparent 68%)',shape:'bone',cA:0x9a3818,cB:0xb85028,cC:0xe87050},
+  {id:'brulee',cat:'dessert',catLbl:'Dessert',name:['Vanilla','Crème Brûlée'],tag:'Madagascar Bourbon · Caramelised Crust · Berries',price:'₹380',cal:'380 kcal',ing:'Madagascar vanilla · Egg yolks · Double cream · Caramelised sugar · Seasonal berries',usdz:'https://developer.apple.com/augmented-reality/quick-look/models/teapot/teapot.usdz',amb:'radial-gradient(ellipse at 50% 38%,rgba(220,175,55,.15) 0%,transparent 62%)',shape:'ramekin',cA:0xf0d870,cB:0xe0a030,cC:0xfaf0c0},
+  {id:'fondant',cat:'dessert',catLbl:'Dessert',name:['Dark Chocolate','Fondant'],tag:'Valrhona 70% · Salted Caramel Core · Gold Leaf',price:'₹420',cal:'510 kcal',ing:'Valrhona 70% dark chocolate · Salted caramel core · Vanilla bean ice cream · Gold leaf',usdz:'https://developer.apple.com/augmented-reality/quick-look/models/teapot/teapot.usdz',amb:'radial-gradient(ellipse at 44% 44%,rgba(42,22,10,.3) 0%,transparent 62%)',shape:'dome',cA:0x2a1608,cB:0x4a2810,cC:0xc89830},
+];
+
+/* ───────────────────────────────────────────
+   DEVICE
+─────────────────────────────────────────── */
+const Dev={
+  get iOS(){return/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1)},
+  get android(){return/Android/.test(navigator.userAgent)},
+  get mobile(){return this.iOS||this.android},
+  async ar(){
+    if(this.iOS)return'ql';
+    if(this.android){
+      if(navigator.xr){try{if(await navigator.xr.isSessionSupported('immersive-ar'))return'xr';}catch(_){}}
+      return'sv';
+    }
+    return'none';
+  }
+};
+
+/* ───────────────────────────────────────────
+   BACKGROUND PARTICLES  (lightweight, bg only)
+─────────────────────────────────────────── */
+function initBg(cv){
+  const W=cv.offsetWidth||cv.clientWidth||300;
+  const H=cv.offsetHeight||cv.clientHeight||300;
+  const r=new THREE.WebGLRenderer({canvas:cv,alpha:true,antialias:false});
+  r.setPixelRatio(Math.min(devicePixelRatio,1.5));
+  r.setSize(W,H,false);
+  const s=new THREE.Scene();
+  const c=new THREE.PerspectiveCamera(60,W/H,0.1,100);
+  c.position.z=5;
+  const N=100,pos=new Float32Array(N*3);
+  for(let i=0;i<N;i++){pos[i*3]=(Math.random()-.5)*14;pos[i*3+1]=(Math.random()-.5)*12;pos[i*3+2]=(Math.random()-.5)*8;}
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  const pts=new THREE.Points(geo,new THREE.PointsMaterial({color:0xc9a04a,size:.028,transparent:true,opacity:.25,sizeAttenuation:true}));
+  s.add(pts);
+  const ro=()=>{
+    requestAnimationFrame(ro);
+    const t=Date.now()*.0004;
+    pts.rotation.y=t*.04;pts.rotation.x=t*.02;
+    pts.material.opacity=.15+Math.sin(t*.9)*.08;
+    r.render(s,c);
+  };ro();
+  window.addEventListener('resize',()=>{
+    const W2=cv.offsetWidth,H2=cv.offsetHeight;
+    if(!W2||!H2)return;
+    c.aspect=W2/H2;c.updateProjectionMatrix();r.setSize(W2,H2,false);
+  });
+}
+
+/* ───────────────────────────────────────────
+   FOOD 3D RENDERER
+─────────────────────────────────────────── */
+class Food3D{
+  constructor(cv){
+    this.cv=cv;
+    // Use real pixel dimensions already stamped on canvas by _sizeCanvases()
+    const W=cv.width||cv.offsetWidth||window.innerWidth;
+    const H=cv.height||cv.offsetHeight||window.innerHeight;
+
+    this.scene=new THREE.Scene();
+    this.cam=new THREE.PerspectiveCamera(38,W/H,0.01,50);
+    // Camera centred on (0,0,0) — straight ahead, no offset
+    this.cam.position.set(0,0,3.8);
+    this.cam.lookAt(0,0,0);
+
+    this.ren=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true,powerPreference:'high-performance'});
+    this.ren.setPixelRatio(Math.min(devicePixelRatio,2));
+    this.ren.setSize(W,H,false); // false = don't touch CSS, canvas already sized
+    this.ren.shadowMap.enabled=true;
+    this.ren.shadowMap.type=THREE.PCFSoftShadowMap;
+    this.ren.toneMapping=THREE.ACESFilmicToneMapping;
+    this.ren.toneMappingExposure=1.3;
+
+    this._buildLights();
+    this._buildShadowPlane();
+
+    this.grp=null;
+    this.t=0;
+    this.drag=false;this.lx=0;this.ly=0;
+    this.vx=0;this.vy=0;this.rx=0;this.ry=0;
+    this.auto=true;this.autoT=null;
+    this.sc=1;this.tsc=1;
+    this.ps=0;this.psc0=1;
+
+    this._loop();
+  }
+
+  _buildLights(){
+    // Key light — warm
+    const key=new THREE.DirectionalLight(0xfff5e8,3.2);
+    key.position.set(3.5,5,3);
+    key.castShadow=true;
+    key.shadow.mapSize.set(512,512);
+    key.shadow.radius=5;
+    this.scene.add(key);
+
+    // Fill — cool blue
+    const fill=new THREE.DirectionalLight(0xc8d8ff,0.85);
+    fill.position.set(-4,2,-2);
+    this.scene.add(fill);
+
+    // Rim — gold
+    const rim=new THREE.DirectionalLight(0xffc060,1.6);
+    rim.position.set(0,-3,-5);
+    this.scene.add(rim);
+
+    // Ambient
+    this.scene.add(new THREE.AmbientLight(0x1a1008,2.8));
+
+    // Ground bounce
+    const gb=new THREE.PointLight(0xff8830,.5,8);
+    gb.position.set(0,-2.5,1);
+    this.scene.add(gb);
+  }
+
+  _buildShadowPlane(){
+    const sp=new THREE.Mesh(
+      new THREE.PlaneGeometry(10,10),
+      new THREE.ShadowMaterial({opacity:.3})
+    );
+    sp.rotation.x=-Math.PI/2;
+    sp.position.y=-1.6;
+    sp.receiveShadow=true;
+    this.scene.add(sp);
+  }
+
+  _mat(col,rough=.42,metal=.06){
+    return new THREE.MeshStandardMaterial({color:col,roughness:rough,metalness:metal});
+  }
+
+  _mesh(geo,col,rough,metal){
+    const m=new THREE.Mesh(geo,this._mat(col,rough,metal));
+    m.castShadow=true;return m;
+  }
+
+  build(item){
+    // Remove old group
+    if(this.grp){this.scene.remove(this.grp);this.grp=null;}
+
+    const g=new THREE.Group();
+    const {cA,cB,cC,shape}=item;
+
+    if(shape==='cluster'){
+      [[0,0,0,.68],[-.72,-.12,.1,.5],[.68,-.15,-.1,.52],[0,-.07,-.68,.48],[.16,.56,0,.37]].forEach(([x,y,z,r])=>{
+        const m=this._mesh(new THREE.SphereGeometry(r,32,32),cA,.28,.1);
+        m.position.set(x,y,z);g.add(m);
+      });
+      const fl=this._mesh(new THREE.SphereGeometry(.11,12,12),cC,.12,.65);
+      fl.position.set(.32,.64,0);g.add(fl);
+    }
+    else if(shape==='disc'){
+      const base=this._mesh(new THREE.CylinderGeometry(1.28,1.22,.13,48),cA,.8,0);
+      g.add(base);
+      const sauce=this._mesh(new THREE.CylinderGeometry(1.13,1.13,.025,48),cB,.82,0);
+      sauce.position.y=.08;g.add(sauce);
+      for(let i=0;i<7;i++){
+        const a=i/7*Math.PI*2,rr=.58+Math.random()*.38;
+        const b=this._mesh(new THREE.SphereGeometry(.11+Math.random()*.09,14,14),0xf5f0e0,.58,0);
+        b.position.set(Math.cos(a)*rr,.12,Math.sin(a)*rr);g.add(b);
+      }
+      [45,135,225,315].forEach(d=>{
+        const r2=d*Math.PI/180;
+        const l=this._mesh(new THREE.SphereGeometry(.065,8,8),cC,.8,0);
+        l.position.set(Math.cos(r2)*.78,.14,Math.sin(r2)*.78);g.add(l);
+      });
+    }
+    else if(shape==='wave'){
+      const pts2=[];
+      for(let i=0;i<=20;i++){const t=i/20;pts2.push(new THREE.Vector2(.05+t*.52-t*t*.22,t*1.58-.79));}
+      const sal=this._mesh(new THREE.LatheGeometry(pts2,48),cA,.33,.12);
+      sal.rotation.z=.25;g.add(sal);
+      const glz=new THREE.Mesh(new THREE.LatheGeometry(pts2,48),this._mat(cB,.12,.38));
+      glz.rotation.z=.25;glz.scale.set(1.01,1.01,1.01);g.add(glz);
+    }
+    else if(shape==='arch'){
+      const meat=this._mesh(new THREE.BoxGeometry(1.4,.58,.62),cA,.55,.06);
+      g.add(meat);
+      for(let i=0;i<4;i++){
+        const bone=this._mesh(new THREE.CylinderGeometry(.054,.054,.92,14),0xf8f2e0,.6,0);
+        bone.position.set(-.44+i*.3,.63+(i%2)*.05,0);
+        bone.rotation.z=.25+i*.015;g.add(bone);
+        const tip=this._mesh(new THREE.SphereGeometry(.068,10,10),0xf8f2e0,.5,0);
+        tip.position.set(bone.position.x,bone.position.y+.5,0);g.add(tip);
+      }
+      const herb=this._mesh(new THREE.BoxGeometry(1.4,.055,.62),cC,.9,0);
+      herb.position.y=.32;g.add(herb);
+    }
+    else if(shape==='pillow'){
+      for(let i=0;i<3;i++){
+        const rv=this._mesh(new THREE.TorusGeometry(.4,.22,22,46),cA,.38,.06);
+        rv.position.set(-0.72+i*.76,0,0);rv.rotation.x=Math.PI*.5;g.add(rv);
+        const fill2=this._mesh(new THREE.SphereGeometry(.18,14,14),cB,.58,0);
+        fill2.position.set(-0.72+i*.76,.04,0);g.add(fill2);
+      }
+    }
+    else if(shape==='bone'){
+      const pts3=[];
+      for(let i=0;i<=16;i++){const t=i/16;pts3.push(new THREE.Vector2(.48-t*.28+t*t*.18,t*1.75-.88));}
+      const leg=this._mesh(new THREE.LatheGeometry(pts3,34),cA,.48,.07);
+      g.add(leg);
+      const bEnd=this._mesh(new THREE.CylinderGeometry(.058,.058,.48,14),0xf5f0e0,.54,0);
+      bEnd.position.y=1.08;g.add(bEnd);
+      const knob=this._mesh(new THREE.SphereGeometry(.09,12,12),0xf5f0e0,.44,0);
+      knob.position.y=1.34;g.add(knob);
+      const glz2=new THREE.Mesh(new THREE.LatheGeometry(pts3,34),this._mat(cC,.12,.22));
+      glz2.scale.set(1.016,1.016,1.016);g.add(glz2);
+    }
+    else if(shape==='ramekin'){
+      const rim2=this._mesh(new THREE.CylinderGeometry(1.04,.88,.48,46),0xf8f0d8,.78,0);
+      g.add(rim2);
+      const car=this._mesh(new THREE.CylinderGeometry(1.02,1.02,.042,46),cA,.18,.48);
+      car.position.y=.265;g.add(car);
+      for(let i=0;i<4;i++){
+        const cr=this._mesh(new THREE.BoxGeometry(.58,.01,.02),0x8a5010,.14,0);
+        cr.position.y=.285;cr.rotation.y=i/4*Math.PI;g.add(cr);
+      }
+      [0,120,240].forEach(d=>{
+        const r3=d*Math.PI/180;
+        const b2=this._mesh(new THREE.SphereGeometry(.095,10,10),0xc02040,.38,0);
+        b2.position.set(Math.cos(r3)*.53,.345,Math.sin(r3)*.53);g.add(b2);
+      });
+    }
+    else if(shape==='dome'){
+      const dome=this._mesh(new THREE.SphereGeometry(.88,46,22,0,Math.PI*2,0,Math.PI*.5),cA,.22,.17);
+      g.add(dome);
+      const plate=this._mesh(new THREE.CylinderGeometry(1.08,1.08,.05,46),cB,.28,.18);
+      plate.position.y=-.02;g.add(plate);
+      const fl3=this._mesh(new THREE.CylinderGeometry(.11,.38,.48,22,1,true),cA,.09,.28);
+      fl3.position.set(.38,-.1,0);fl3.rotation.z=.48;g.add(fl3);
+      const gld=this._mesh(new THREE.PlaneGeometry(.22,.16),cC,.04,.88);
+      gld.position.set(-.18,.9,.18);gld.rotation.x=-.95;g.add(gld);
+    }
+    else{
+      g.add(this._mesh(new THREE.SphereGeometry(.9,32,32),cA));
+    }
+
+    // Gold halo ring
+    const ring=new THREE.Mesh(
+      new THREE.TorusGeometry(1.52,.007,8,80),
+      new THREE.MeshBasicMaterial({color:0xc9a04a,transparent:true,opacity:.16})
+    );
+    ring.rotation.x=Math.PI/2;ring.position.y=-1.52;g.add(ring);
+
+    // Pop-in
+    g.scale.setScalar(.01);
+    this.scene.add(g);this.grp=g;
+    this.rx=0;this.ry=0;this.vx=0;this.vy=0;
+    this.sc=.01;this.tsc=1;this.auto=true;
+    let pt=0;
+    const inn=()=>{
+      pt=Math.min(pt+.05,1);
+      const e=1-Math.pow(1-pt,3);
+      g.scale.setScalar(.01+.99*e);
+      if(pt<1)requestAnimationFrame(inn);
+    };inn();
+  }
+
+  attachInput(el){
+    // Mouse
+    el.addEventListener('mousedown',e=>{this.drag=true;this.auto=false;this.lx=e.clientX;this.ly=e.clientY;this.vx=0;this.vy=0;clearTimeout(this.autoT);});
+    window.addEventListener('mouseup',()=>{this.drag=false;this.autoT=setTimeout(()=>this.auto=true,3500);});
+    window.addEventListener('mousemove',e=>{
+      if(!this.drag)return;
+      const dx=e.clientX-this.lx,dy=e.clientY-this.ly;
+      this.vx=dy*.007;this.vy=dx*.009;
+      this.rx=Math.max(-.7,Math.min(.7,this.rx+this.vx));
+      this.ry+=this.vy;
+      this.lx=e.clientX;this.ly=e.clientY;
+    });
+    el.addEventListener('wheel',e=>{this.tsc=Math.max(.5,Math.min(2.5,this.tsc-e.deltaY*.001));},{passive:true});
+
+    // Touch
+    el.addEventListener('touchstart',e=>{
+      if(e.touches.length===1){
+        this.drag=true;this.auto=false;
+        this.lx=e.touches[0].clientX;this.ly=e.touches[0].clientY;
+        this.vx=0;this.vy=0;clearTimeout(this.autoT);
+      }else if(e.touches.length===2){
+        this.drag=false;
+        this.ps=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+        this.psc0=this.tsc;
+      }
+    },{passive:true});
+    window.addEventListener('touchend',e=>{
+      if(e.touches.length===0){this.drag=false;this.autoT=setTimeout(()=>this.auto=true,4000);}
+    },{passive:true});
+    window.addEventListener('touchmove',e=>{
+      if(e.touches.length===1&&this.drag){
+        const dx=e.touches[0].clientX-this.lx,dy=e.touches[0].clientY-this.ly;
+        this.vx=dy*.007;this.vy=dx*.009;
+        this.rx=Math.max(-.7,Math.min(.7,this.rx+this.vx));
+        this.ry+=this.vy;
+        this.lx=e.touches[0].clientX;this.ly=e.touches[0].clientY;
+      }else if(e.touches.length===2){
+        const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+        this.tsc=Math.max(.5,Math.min(2.5,this.psc0*(d/this.ps)));
+      }
+    },{passive:true});
+  }
+
+  resize(w,h){
+    if(!w||!h)return;
+    this.cam.aspect=w/h;
+    this.cam.updateProjectionMatrix();
+    this.ren.setSize(w,h,false);
+  }
+
+  _loop(){
+    requestAnimationFrame(()=>this._loop());
+    this.t+=.011;const T=this.t;
+    if(this.grp){
+      if(this.auto)this.ry+=.006;
+      else{this.rx+=this.vx*.88;this.vx*=.88;this.ry+=this.vy*.88;this.vy*=.88;}
+      this.grp.rotation.x=this.rx;
+      this.grp.rotation.y=this.ry;
+      this.grp.position.y=Math.sin(T*.55)*.09;
+      this.sc+=(this.tsc-this.sc)*.07;
+      this.grp.scale.setScalar(this.sc);
+    }
+    // Keep camera perfectly centred — only very subtle y bob, no x drift
+    this.cam.position.x=0;
+    this.cam.position.y=Math.sin(T*.08)*.015;
+    this.cam.lookAt(0,0,0);
+    this.ren.render(this.scene,this.cam);
+  }
+}
+
+/* ───────────────────────────────────────────
+   APP
+─────────────────────────────────────────── */
+class App{
+  constructor(){
+    this.ar='none';this.cat='all';this.list=[...MENU];this.idx=0;
+    this.panFull=true;this.ingOpen=true;
+    this.food=null;this.tx=0;this.ty=0;
+  }
+
+  async boot(){
+    this.p(12,'Detecting device…');
+    this.ar=await Dev.ar();
+    this.p(35,'Building 3D engine…');
+
+    // 1. Apply panel height first so viewer gets its correct flex size
+    this._layout();
+    await this.w(60); // small wait for CSS to apply
+
+    // 2. Size canvases to viewer's actual painted dimensions
+    const v=document.getElementById('viewer');
+    const vw=v.offsetWidth||window.innerWidth;
+    const vh2=v.offsetHeight||Math.round(window.innerHeight*0.52);
+
+    ['bg-cv','food-cv'].forEach(id=>{
+      const c=document.getElementById(id);
+      c.width=vw; c.height=vh2;
+      c.style.width=vw+'px'; c.style.height=vh2+'px';
+    });
+
+    // 3. Create engines with correct canvas sizes
+    initBg(document.getElementById('bg-cv'));
+
+    const fcv=document.getElementById('food-cv');
+    this.food=new Food3D(fcv);
+    this.food.attachInput(fcv);
+
+    this.p(65,'Preparing menu…');
+    await this.w(100);
+
+    this._configAR();
+    this._buildDots();
+    this._bindUI();
+    this._load(0,1);
+
+    // 4. Final resize after full paint to correct any pixel rounding
+    setTimeout(()=>this._sizeCanvases(),200);
+
+    this.p(100,'Ready');
+    await this.w(200);
+    document.getElementById('loader').classList.add('gone');
+  }
+
+  w(ms){return new Promise(r=>setTimeout(r,ms))}
+  p(pct,txt){document.getElementById('ldf').style.width=pct+'%';document.getElementById('ldt').textContent=txt;}
+
+  _sizeCanvases(){
+    const v=document.getElementById('viewer');
+    // Double rAF ensures flex layout has fully painted before we measure
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      const w=v.offsetWidth;
+      const h=v.offsetHeight;
+      if(!w||!h)return;
+      ['bg-cv','food-cv'].forEach(id=>{
+        const c=document.getElementById(id);
+        c.width=Math.round(w);
+        c.height=Math.round(h);
+        c.style.width=w+'px';
+        c.style.height=h+'px';
+      });
+      // Now resize the Three.js renderers to match
+      if(this.food)this.food.resize(w,h);
+    }));
+  }
+
+  _layout(){
+    const vh=window.innerHeight;
+    const panH=Math.min(320,Math.max(260,Math.round(vh*.38)));
+    const miniH=88;
+    const css=document.documentElement.style;
+    css.setProperty('--pan',panH+'px');
+    css.setProperty('--pan-mini',miniH+'px');
+    const nav=document.getElementById('nav');
+    if(nav)nav.style.bottom=panH+'px';
+  }
+
+  _configAR(){
+    const bt=document.getElementById('btext');
+    const bd=document.getElementById('bdot');
+    const tt=document.getElementById('artxt');
+    if(this.ar==='ql'){bt.textContent='AR Quick Look · iOS';bd.className='bdot b';tt.textContent='View in AR';}
+    else if(this.ar==='xr'){bt.textContent='WebXR · Android';bd.className='bdot g';tt.textContent='View in AR';}
+    else if(this.ar==='sv'){bt.textContent='AR · Android';bd.className='bdot g';tt.textContent='View in AR';}
+    else{bt.textContent='3D Interactive';bd.className='bdot p';tt.textContent='AR on Mobile';}
+  }
+
+  get item(){return this.list[this.idx]}
+
+  _load(idx,dir){
+    if(!this.list.length)return;
+    this.idx=Math.max(0,Math.min(idx,this.list.length-1));
+    const it=this.item;
+
+    // Flash
+    const fl=document.getElementById('flash');
+    fl.classList.add('on');setTimeout(()=>fl.classList.remove('on'),170);
+
+    // 3D
+    this.food.build(it);
+
+    // Ambient
+    document.getElementById('amb').style.background=it.amb;
+
+    // Text
+    const[w1,w2]=it.name;
+    document.getElementById('pname').innerHTML=`${w1} <em>${w2}</em>`;
+    document.getElementById('ptag').textContent=it.tag;
+    document.getElementById('pprice').textContent=it.price;
+    document.getElementById('pcal').textContent=it.cal;
+    document.getElementById('ptype').textContent=it.catLbl;
+    document.getElementById('ping').textContent=it.ing;
+    document.getElementById('vidx').textContent=`${String(this.idx+1).padStart(2,'0')} / ${String(this.list.length).padStart(2,'0')}`;
+    this._syncDots();
+  }
+
+  nav(dir){this._load((this.idx+dir+this.list.length)%this.list.length,dir);}
+
+  _filter(cat){
+    this.cat=cat;
+    this.list=cat==='all'?[...MENU]:MENU.filter(m=>m.cat===cat);
+    this.idx=0;this._buildDots();this._load(0,1);
+  }
+
+  _buildDots(){
+    const c=document.getElementById('dots');c.innerHTML='';
+    this.list.forEach((_,i)=>{
+      const d=document.createElement('div');
+      d.className='dot'+(i===this.idx?' on':'');c.appendChild(d);
+    });
+  }
+  _syncDots(){document.querySelectorAll('.dot').forEach((d,i)=>d.classList.toggle('on',i===this.idx));}
+
+  _fireAR(){
+    if(!Dev.mobile){document.getElementById('armod').classList.add('on');return;}
+
+    if(this.ar==='ql'){
+      // iOS AR Quick Look — hidden anchor trick
+      const a=document.getElementById('usdz');
+      a.href=this.item.usdz;
+      // Must be a direct user gesture — click it immediately
+      a.click();
+      toast('Opening AR Quick Look…');
+    }
+    else if(this.ar==='xr'){
+      // Android WebXR — request session properly
+      toast('Starting AR… allow camera when prompted');
+      navigator.xr.requestSession('immersive-ar',{
+        requiredFeatures:['hit-test'],
+        optionalFeatures:['dom-overlay'],
+        domOverlay:{root:document.getElementById('app')}
+      }).then(session=>{
+        toast('AR active — point at a flat surface');
+        session.addEventListener('end',()=>toast('AR ended'));
+      }).catch(()=>toast('AR failed — grant camera permission in browser settings'));
+    }
+    else if(this.ar==='sv'){
+      // Android Scene Viewer (ARCore, no WebXR)
+      const src=encodeURIComponent('https://modelviewer.dev/shared-assets/models/Astronaut.glb');
+      const intent=`intent://arvr.google.com/scene-viewer/1.0?file=${src}&mode=ar_preferred#Intent;scheme=https;package=com.google.ar.core;action=android.intent.action.VIEW;S.browser_fallback_url=https://play.google.com/store/apps/details?id=com.google.ar.core;end;`;
+      location.href=intent;
+      setTimeout(()=>toast('Install Google Play Services for AR if needed'),1800);
+    }
+    else{
+      document.getElementById('armod').classList.add('on');
+    }
+  }
+
+  _bindUI(){
+    // Cats
+    document.querySelectorAll('.cbt').forEach(b=>b.addEventListener('click',()=>{
+      document.querySelectorAll('.cbt').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');this._filter(b.dataset.c);
+    }));
+
+    // Nav
+    document.getElementById('prev').addEventListener('click',()=>this.nav(-1));
+    document.getElementById('next').addEventListener('click',()=>this.nav(1));
+
+    // AR
+    document.getElementById('arbtn').addEventListener('click',()=>this._fireAR());
+
+    // Ingredients toggle
+    document.getElementById('itog').addEventListener('click',()=>{
+      this.ingOpen=!this.ingOpen;
+      document.getElementById('ping').classList.toggle('hide',!this.ingOpen);
+    });
+
+    // Panel collapse
+    document.getElementById('ptog').addEventListener('click',()=>{
+      this.panFull=!this.panFull;
+      document.getElementById('panel').classList.toggle('mini',!this.panFull);
+      document.getElementById('ptogsv').setAttribute('points',
+        this.panFull?'18 15 12 9 6 15':'6 9 12 15 18 9');
+      // Re-calc layout + resize canvases after transition completes
+      setTimeout(()=>{this._layout();this._sizeCanvases();},420);
+    });
+
+    // Modal close
+    document.getElementById('amclose').addEventListener('click',()=>document.getElementById('armod').classList.remove('on'));
+    document.getElementById('armod').addEventListener('click',e=>{if(e.target.id==='armod')document.getElementById('armod').classList.remove('on');});
+
+    // Swipe on viewer (only clear horizontal, not rotate gestures)
+    const vw=document.getElementById('viewer');
+    vw.addEventListener('touchstart',e=>{this.tx=e.touches[0].clientX;this.ty=e.touches[0].clientY;},{passive:true});
+    vw.addEventListener('touchend',e=>{
+      if(e.changedTouches.length<1)return;
+      const dx=e.changedTouches[0].clientX-this.tx;
+      const dy=e.changedTouches[0].clientY-this.ty;
+      if(Math.abs(dx)>72&&Math.abs(dx)>Math.abs(dy)*2.2)this.nav(dx<0?1:-1);
+    },{passive:true});
+
+    // Keyboard
+    document.addEventListener('keydown',e=>{
+      if(e.key==='ArrowRight')this.nav(1);
+      if(e.key==='ArrowLeft')this.nav(-1);
+    });
+
+    // Resize
+    window.addEventListener('resize',()=>{this._layout();setTimeout(()=>this._sizeCanvases(),100);});
+  }
+}
+
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('on');
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),2800);
+}
+
+window.addEventListener('DOMContentLoaded',()=>new App().boot().catch(e=>{
+  console.error(e);
+  document.getElementById('ldt').textContent='Error: '+e.message;
+}));
+</script>
+</body>
+</html>
